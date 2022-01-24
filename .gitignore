@@ -1,0 +1,4 @@
+rvm_mobilenetv3.pth
+*.pth
+*.pyc
+data/
