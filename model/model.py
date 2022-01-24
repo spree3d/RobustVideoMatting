@@ -30,7 +30,8 @@ class MattingNetwork(nn.Module):
             self.decoder = RecurrentDecoder([64, 256, 512, 256], [128, 64, 32, 16])
             
         self.project_mat = Projection(16, 4)
-        self.project_seg = Projection(16, 1)
+        #self.project_seg = Projection(16, 1)
+        self.project_seg = Projection(16, 9)
 
         if refiner == 'deep_guided_filter':
             self.refiner = DeepGuidedFilterRefiner()
@@ -44,7 +45,7 @@ class MattingNetwork(nn.Module):
                 r3: Optional[Tensor] = None,
                 r4: Optional[Tensor] = None,
                 downsample_ratio: float = 1,
-                segmentation_pass: bool = False):
+                segmentation_pass: bool = True):
         
         if downsample_ratio != 1:
             src_sm = self._interpolate(src, scale_factor=downsample_ratio)

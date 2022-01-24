@@ -94,15 +94,9 @@ from torchvision.utils import make_grid
 from torchvision.transforms.functional import center_crop
 from tqdm import tqdm
 
-from dataset.videomatte import (
-    VideoMatteDataset,
-    VideoMatteTrainAugmentation,
-    VideoMatteValidAugmentation,
-)
-from dataset.imagematte import (
-    ImageMatteDataset,
-    ImageMatteAugmentation
-)
+from dataset.spree3d_dataset import Spree3DDataset
+
+
 from dataset.coco import (
     CocoPanopticDataset,
     CocoPanopticTrainAugmentation,
@@ -136,19 +130,19 @@ class Trainer:
     def parse_args(self):
         parser = argparse.ArgumentParser()
         # Model
-        parser.add_argument('--model-variant', type=str, required=True, choices=['mobilenetv3', 'resnet50'])
+        parser.add_argument('--model-variant', type=str, required=False, choices=['mobilenetv3', 'resnet50'])
         # Matting dataset
-        parser.add_argument('--dataset', type=str, required=True, choices=['videomatte', 'imagematte'])
+        parser.add_argument('--dataset', type=str, required=False, choices=['videomatte', 'imagematte'])
         # Learning rate
-        parser.add_argument('--learning-rate-backbone', type=float, required=True)
-        parser.add_argument('--learning-rate-aspp', type=float, required=True)
-        parser.add_argument('--learning-rate-decoder', type=float, required=True)
-        parser.add_argument('--learning-rate-refiner', type=float, required=True)
+        parser.add_argument('--learning-rate-backbone', type=float, required=False)
+        parser.add_argument('--learning-rate-aspp', type=float, required=False)
+        parser.add_argument('--learning-rate-decoder', type=float, required=False)
+        parser.add_argument('--learning-rate-refiner', type=float, required=False)
         # Training setting
         parser.add_argument('--train-hr', action='store_true')
         parser.add_argument('--resolution-lr', type=int, default=512)
         parser.add_argument('--resolution-hr', type=int, default=2048)
-        parser.add_argument('--seq-length-lr', type=int, required=True)
+        parser.add_argument('--seq-length-lr', type=int, required=False)
         parser.add_argument('--seq-length-hr', type=int, default=6)
         parser.add_argument('--downsample-ratio', type=float, default=0.25)
         parser.add_argument('--batch-size-per-gpu', type=int, default=1)
@@ -156,12 +150,12 @@ class Trainer:
         parser.add_argument('--epoch-start', type=int, default=0)
         parser.add_argument('--epoch-end', type=int, default=16)
         # Tensorboard logging
-        parser.add_argument('--log-dir', type=str, required=True)
+        parser.add_argument('--log-dir', type=str, required=False)
         parser.add_argument('--log-train-loss-interval', type=int, default=20)
         parser.add_argument('--log-train-images-interval', type=int, default=500)
         # Checkpoint loading and saving
         parser.add_argument('--checkpoint', type=str)
-        parser.add_argument('--checkpoint-dir', type=str, required=True)
+        parser.add_argument('--checkpoint-dir', type=str, required=False)
         parser.add_argument('--checkpoint-save-interval', type=int, default=500)
         # Distributed
         parser.add_argument('--distributed-addr', type=str, default='localhost')
@@ -184,139 +178,22 @@ class Trainer:
         self.log('Initializing matting datasets')
         size_hr = (self.args.resolution_hr, self.args.resolution_hr)
         size_lr = (self.args.resolution_lr, self.args.resolution_lr)
-        
-        # Matting datasets:
-        if self.args.dataset == 'videomatte':
-            self.dataset_lr_train = VideoMatteDataset(
-                videomatte_dir=DATA_PATHS['videomatte']['train'],
-                background_image_dir=DATA_PATHS['background_images']['train'],
-                background_video_dir=DATA_PATHS['background_videos']['train'],
-                size=self.args.resolution_lr,
-                seq_length=self.args.seq_length_lr,
-                seq_sampler=TrainFrameSampler(),
-                transform=VideoMatteTrainAugmentation(size_lr))
-            if self.args.train_hr:
-                self.dataset_hr_train = VideoMatteDataset(
-                    videomatte_dir=DATA_PATHS['videomatte']['train'],
-                    background_image_dir=DATA_PATHS['background_images']['train'],
-                    background_video_dir=DATA_PATHS['background_videos']['train'],
-                    size=self.args.resolution_hr,
-                    seq_length=self.args.seq_length_hr,
-                    seq_sampler=TrainFrameSampler(),
-                    transform=VideoMatteTrainAugmentation(size_hr))
-            self.dataset_valid = VideoMatteDataset(
-                videomatte_dir=DATA_PATHS['videomatte']['valid'],
-                background_image_dir=DATA_PATHS['background_images']['valid'],
-                background_video_dir=DATA_PATHS['background_videos']['valid'],
-                size=self.args.resolution_hr if self.args.train_hr else self.args.resolution_lr,
-                seq_length=self.args.seq_length_hr if self.args.train_hr else self.args.seq_length_lr,
-                seq_sampler=ValidFrameSampler(),
-                transform=VideoMatteValidAugmentation(size_hr if self.args.train_hr else size_lr))
-        else:
-            self.dataset_lr_train = ImageMatteDataset(
-                imagematte_dir=DATA_PATHS['imagematte']['train'],
-                background_image_dir=DATA_PATHS['background_images']['train'],
-                background_video_dir=DATA_PATHS['background_videos']['train'],
-                size=self.args.resolution_lr,
-                seq_length=self.args.seq_length_lr,
-                seq_sampler=TrainFrameSampler(),
-                transform=ImageMatteAugmentation(size_lr))
-            if self.args.train_hr:
-                self.dataset_hr_train = ImageMatteDataset(
-                    imagematte_dir=DATA_PATHS['imagematte']['train'],
-                    background_image_dir=DATA_PATHS['background_images']['train'],
-                    background_video_dir=DATA_PATHS['background_videos']['train'],
-                    size=self.args.resolution_hr,
-                    seq_length=self.args.seq_length_hr,
-                    seq_sampler=TrainFrameSampler(),
-                    transform=ImageMatteAugmentation(size_hr))
-            self.dataset_valid = ImageMatteDataset(
-                imagematte_dir=DATA_PATHS['imagematte']['valid'],
-                background_image_dir=DATA_PATHS['background_images']['valid'],
-                background_video_dir=DATA_PATHS['background_videos']['valid'],
-                size=self.args.resolution_hr if self.args.train_hr else self.args.resolution_lr,
-                seq_length=self.args.seq_length_hr if self.args.train_hr else self.args.seq_length_lr,
-                seq_sampler=ValidFrameSampler(),
-                transform=ImageMatteAugmentation(size_hr if self.args.train_hr else size_lr))
-            
-        # Matting dataloaders:
-        self.datasampler_lr_train = DistributedSampler(
-            dataset=self.dataset_lr_train,
-            rank=self.rank,
-            num_replicas=self.world_size,
-            shuffle=True)
-        self.dataloader_lr_train = DataLoader(
-            dataset=self.dataset_lr_train,
-            batch_size=self.args.batch_size_per_gpu,
-            num_workers=self.args.num_workers,
-            sampler=self.datasampler_lr_train,
-            pin_memory=True)
-        if self.args.train_hr:
-            self.datasampler_hr_train = DistributedSampler(
-                dataset=self.dataset_hr_train,
-                rank=self.rank,
-                num_replicas=self.world_size,
-                shuffle=True)
-            self.dataloader_hr_train = DataLoader(
-                dataset=self.dataset_hr_train,
-                batch_size=self.args.batch_size_per_gpu,
-                num_workers=self.args.num_workers,
-                sampler=self.datasampler_hr_train,
-                pin_memory=True)
-        self.dataloader_valid = DataLoader(
-            dataset=self.dataset_valid,
-            batch_size=self.args.batch_size_per_gpu,
-            num_workers=self.args.num_workers,
-            pin_memory=True)
-        
+
         # Segementation datasets
         self.log('Initializing image segmentation datasets')
-        self.dataset_seg_image = ConcatDataset([
-            CocoPanopticDataset(
-                imgdir=DATA_PATHS['coco_panoptic']['imgdir'],
-                anndir=DATA_PATHS['coco_panoptic']['anndir'],
-                annfile=DATA_PATHS['coco_panoptic']['annfile'],
-                transform=CocoPanopticTrainAugmentation(size_lr)),
-            SuperviselyPersonDataset(
-                imgdir=DATA_PATHS['spd']['imgdir'],
-                segdir=DATA_PATHS['spd']['segdir'],
-                transform=CocoPanopticTrainAugmentation(size_lr))
-        ])
-        self.datasampler_seg_image = DistributedSampler(
-            dataset=self.dataset_seg_image,
-            rank=self.rank,
-            num_replicas=self.world_size,
-            shuffle=True)
+        self.dataset_seg_image = Spree3DDataset(
+                base_dir='dataset/vids',
+                mask_dir='dataset/masks')
+                
         self.dataloader_seg_image = DataLoader(
             dataset=self.dataset_seg_image,
-            batch_size=self.args.batch_size_per_gpu * self.args.seq_length_lr,
-            num_workers=self.args.num_workers,
-            sampler=self.datasampler_seg_image,
-            pin_memory=True)
-        
-        self.log('Initializing video segmentation datasets')
-        self.dataset_seg_video = YouTubeVISDataset(
-            videodir=DATA_PATHS['youtubevis']['videodir'],
-            annfile=DATA_PATHS['youtubevis']['annfile'],
-            size=self.args.resolution_lr,
-            seq_length=self.args.seq_length_lr,
-            seq_sampler=TrainFrameSampler(speed=[1]),
-            transform=YouTubeVISAugmentation(size_lr))
-        self.datasampler_seg_video = DistributedSampler(
-            dataset=self.dataset_seg_video,
-            rank=self.rank,
-            num_replicas=self.world_size,
-            shuffle=True)
-        self.dataloader_seg_video = DataLoader(
-            dataset=self.dataset_seg_video,
             batch_size=self.args.batch_size_per_gpu,
             num_workers=self.args.num_workers,
-            sampler=self.datasampler_seg_video,
             pin_memory=True)
         
     def init_model(self):
         self.log('Initializing model')
-        self.model = MattingNetwork(self.args.model_variant, pretrained_backbone=True).to(self.rank)
+        self.model = MattingNetwork('resnet50', pretrained_backbone=True).to(self.rank)
         
         if self.args.checkpoint:
             self.log(f'Restoring from checkpoint: {self.args.checkpoint}')
@@ -343,60 +220,25 @@ class Trainer:
     def train(self):
         for epoch in range(self.args.epoch_start, self.args.epoch_end):
             self.epoch = epoch
-            self.step = epoch * len(self.dataloader_lr_train)
             
             if not self.args.disable_validation:
-                self.validate()
+                #self.validate()
+                pass
             
             self.log(f'Training epoch: {epoch}')
-            for true_fgr, true_pha, true_bgr in tqdm(self.dataloader_lr_train, disable=self.args.disable_progress_bar, dynamic_ncols=True):
-                # Low resolution pass
-                self.train_mat(true_fgr, true_pha, true_bgr, downsample_ratio=1, tag='lr')
+            for frames, masks in tqdm(self.dataloader_seg_image, disable=self.args.disable_progress_bar, dynamic_ncols=True):
 
-                # High resolution pass
-                if self.args.train_hr:
-                    true_fgr, true_pha, true_bgr = self.load_next_mat_hr_sample()
-                    self.train_mat(true_fgr, true_pha, true_bgr, downsample_ratio=self.args.downsample_ratio, tag='hr')
-                
                 # Segmentation pass
-                if self.step % 2 == 0:
-                    true_img, true_seg = self.load_next_seg_video_sample()
-                    self.train_seg(true_img, true_seg, log_label='seg_video')
-                else:
-                    true_img, true_seg = self.load_next_seg_image_sample()
-                    self.train_seg(true_img.unsqueeze(1), true_seg.unsqueeze(1), log_label='seg_image')
+                # if self.step % 2 == 0:
+                #     true_img, true_seg = self.load_next_seg_video_sample()
+                #     self.train_seg(true_img, true_seg, log_label='seg_video')
+                self.train_seg(frames, masks.unsqueeze(dim=1), log_label='seg_image')
                     
                 if self.step % self.args.checkpoint_save_interval == 0:
                     self.save()
                     
                 self.step += 1
                 
-    def train_mat(self, true_fgr, true_pha, true_bgr, downsample_ratio, tag):
-        true_fgr = true_fgr.to(self.rank, non_blocking=True)
-        true_pha = true_pha.to(self.rank, non_blocking=True)
-        true_bgr = true_bgr.to(self.rank, non_blocking=True)
-        true_fgr, true_pha, true_bgr = self.random_crop(true_fgr, true_pha, true_bgr)
-        true_src = true_fgr * true_pha + true_bgr * (1 - true_pha)
-        
-        with autocast(enabled=not self.args.disable_mixed_precision):
-            pred_fgr, pred_pha = self.model_ddp(true_src, downsample_ratio=downsample_ratio)[:2]
-            loss = matting_loss(pred_fgr, pred_pha, true_fgr, true_pha)
-
-        self.scaler.scale(loss['total']).backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        self.optimizer.zero_grad()
-        
-        if self.rank == 0 and self.step % self.args.log_train_loss_interval == 0:
-            for loss_name, loss_value in loss.items():
-                self.writer.add_scalar(f'train_{tag}_{loss_name}', loss_value, self.step)
-            
-        if self.rank == 0 and self.step % self.args.log_train_images_interval == 0:
-            self.writer.add_image(f'train_{tag}_pred_fgr', make_grid(pred_fgr.flatten(0, 1), nrow=pred_fgr.size(1)), self.step)
-            self.writer.add_image(f'train_{tag}_pred_pha', make_grid(pred_pha.flatten(0, 1), nrow=pred_pha.size(1)), self.step)
-            self.writer.add_image(f'train_{tag}_true_fgr', make_grid(true_fgr.flatten(0, 1), nrow=true_fgr.size(1)), self.step)
-            self.writer.add_image(f'train_{tag}_true_pha', make_grid(true_pha.flatten(0, 1), nrow=true_pha.size(1)), self.step)
-            self.writer.add_image(f'train_{tag}_true_src', make_grid(true_src.flatten(0, 1), nrow=true_src.size(1)), self.step)
             
     def train_seg(self, true_img, true_seg, log_label):
         true_img = true_img.to(self.rank, non_blocking=True)
@@ -499,8 +341,4 @@ class Trainer:
             
 if __name__ == '__main__':
     world_size = torch.cuda.device_count()
-    mp.spawn(
-        Trainer,
-        nprocs=world_size,
-        args=(world_size,),
-        join=True)
+    trainer = Trainer(0, world_size)

@@ -66,6 +66,8 @@ class Spree3DDataset(Dataset):
 
     def process_frame(self, f_img):
         return f_img
+        #return torch.from_numpy(f_img.astype(np.float32))
+
         if f_img.shape[:2] != self.img_size:
             f_img = cv2.resize(f_img, self.img_size)
         #f_img = np.array(f_img, dtype=np.uint8)
@@ -74,6 +76,7 @@ class Spree3DDataset(Dataset):
 
     def process_mask(self, mask_old):
         return mask_old
+        return torch.from_numpy(mask_old)
         mask = np.zeros_like(mask_old)
         mask[mask_old == 1] = 1
         mask[mask_old == 2] = 2
@@ -113,6 +116,9 @@ class Spree3DDataset(Dataset):
 
             frames.append(frame)
             masks.append(mask)
+
+        frames = torch.tensor(np.array(frames, dtype=np.float32)).permute(0, 3, 1, 2)/255.0
+        masks = torch.tensor(np.array(masks, dtype=np.float32))
         
         return frames, masks
 

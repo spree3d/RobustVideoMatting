@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.nn import functional as F
 
 # --------------------------------------------------------------------------------- Train Loss
@@ -36,7 +37,7 @@ def segmentation_loss(pred_seg, true_seg):
         pred_seg: Shape(B, T, 1, H, W)
         true_seg: Shape(B, T, 1, H, W)
     """
-    return F.binary_cross_entropy_with_logits(pred_seg, true_seg)
+    return nn.CrossEntropyLoss(pred_seg, true_seg)
 
 
 # ----------------------------------------------------------------------------- Laplacian Loss
