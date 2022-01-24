@@ -1,3 +1,7 @@
 dataset/vids/
 dataset/masks/
 .vscode/launch.json
+rvm_mobilenetv3.pth
+*.pth
+*.pyc
+data/
