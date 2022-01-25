@@ -134,15 +134,15 @@ class Trainer:
         # Matting dataset
         parser.add_argument('--dataset', type=str, required=False, choices=['videomatte', 'imagematte'])
         # Learning rate
-        parser.add_argument('--learning-rate-backbone', type=float, required=False)
-        parser.add_argument('--learning-rate-aspp', type=float, required=False)
-        parser.add_argument('--learning-rate-decoder', type=float, required=False)
-        parser.add_argument('--learning-rate-refiner', type=float, required=False)
+        parser.add_argument('--learning-rate-backbone', type=float, required=False, default=0.00005)
+        parser.add_argument('--learning-rate-aspp', type=float, required=False, default=0.0001)
+        parser.add_argument('--learning-rate-decoder', type=float, required=False, default=0.0001)
+        parser.add_argument('--learning-rate-refiner', type=float, required=False, default=0)
         # Training setting
         parser.add_argument('--train-hr', action='store_true')
         parser.add_argument('--resolution-lr', type=int, default=512)
         parser.add_argument('--resolution-hr', type=int, default=2048)
-        parser.add_argument('--seq-length-lr', type=int, required=False)
+        parser.add_argument('--seq-length-lr', type=int, required=False, default=4)
         parser.add_argument('--seq-length-hr', type=int, default=6)
         parser.add_argument('--downsample-ratio', type=float, default=0.25)
         parser.add_argument('--batch-size-per-gpu', type=int, default=1)
@@ -155,7 +155,7 @@ class Trainer:
         parser.add_argument('--log-train-images-interval', type=int, default=500)
         # Checkpoint loading and saving
         parser.add_argument('--checkpoint', type=str)
-        parser.add_argument('--checkpoint-dir', type=str, required=False)
+        parser.add_argument('--checkpoint-dir', type=str, required=False, default='checkpoints')
         parser.add_argument('--checkpoint-save-interval', type=int, default=500)
         # Distributed
         parser.add_argument('--distributed-addr', type=str, default='localhost')
@@ -187,7 +187,7 @@ class Trainer:
                 
         self.dataloader_seg_image = DataLoader(
             dataset=self.dataset_seg_image,
-            batch_size=self.args.batch_size_per_gpu,
+            batch_size=2,
             num_workers=self.args.num_workers,
             pin_memory=True)
         
@@ -220,6 +220,7 @@ class Trainer:
     def train(self):
         for epoch in range(self.args.epoch_start, self.args.epoch_end):
             self.epoch = epoch
+            self.step = epoch * len(self.dataloader_seg_image)
             
             if not self.args.disable_validation:
                 #self.validate()
@@ -232,7 +233,7 @@ class Trainer:
                 # if self.step % 2 == 0:
                 #     true_img, true_seg = self.load_next_seg_video_sample()
                 #     self.train_seg(true_img, true_seg, log_label='seg_video')
-                self.train_seg(frames, masks.unsqueeze(dim=1), log_label='seg_image')
+                self.train_seg(frames, masks, log_label='seg_image')
                     
                 if self.step % self.args.checkpoint_save_interval == 0:
                     self.save()
@@ -248,7 +249,7 @@ class Trainer:
         
         with autocast(enabled=not self.args.disable_mixed_precision):
             pred_seg = self.model_ddp(true_img, segmentation_pass=True)[0]
-            loss = segmentation_loss(pred_seg, true_seg)
+            loss = segmentation_loss(pred_seg, true_seg.squeeze(-3).long())
         
         self.scaler.scale(loss).backward()
         self.scaler.step(self.optimizer)
@@ -258,8 +259,8 @@ class Trainer:
         if self.rank == 0 and (self.step - self.step % 2) % self.args.log_train_loss_interval == 0:
             self.writer.add_scalar(f'{log_label}_loss', loss, self.step)
         
-        if self.rank == 0 and (self.step - self.step % 2) % self.args.log_train_images_interval == 0:
-            self.writer.add_image(f'{log_label}_pred_seg', make_grid(pred_seg.flatten(0, 1).float().sigmoid(), nrow=self.args.seq_length_lr), self.step)
+        if self.rank == 0 and (self.step - self.step % 2) % self.args.log_train_images_interval == 0 and False:
+            self.writer.add_image(f'{log_label}_pred_seg', make_grid(pred_seg.flatten(0, 1).max().float().sigmoid(), nrow=self.args.seq_length_lr), self.step)
             self.writer.add_image(f'{log_label}_true_seg', make_grid(true_seg.flatten(0, 1), nrow=self.args.seq_length_lr), self.step)
             self.writer.add_image(f'{log_label}_true_img', make_grid(true_img.flatten(0, 1), nrow=self.args.seq_length_lr), self.step)
     
@@ -317,10 +318,13 @@ class Trainer:
         w = random.choice(range(w // 2, w))
         h = random.choice(range(h // 2, h))
         results = []
-        for img in imgs:
+        for i, img in enumerate(imgs):
             B, T = img.shape[:2]
             img = img.flatten(0, 1)
-            img = F.interpolate(img, (max(h, w), max(h, w)), mode='bilinear', align_corners=False)
+            if i == 0:
+                img = F.interpolate(img, (max(h, w), max(h, w)), mode='bilinear', align_corners=False)
+            else:
+                img = F.interpolate(img, (max(h, w), max(h, w)))
             img = center_crop(img, (h, w))
             img = img.reshape(B, T, *img.shape[1:])
             results.append(img)

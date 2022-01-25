@@ -37,7 +37,14 @@ def segmentation_loss(pred_seg, true_seg):
         pred_seg: Shape(B, T, 1, H, W)
         true_seg: Shape(B, T, 1, H, W)
     """
-    return nn.CrossEntropyLoss(pred_seg, true_seg)
+    criterion = nn.CrossEntropyLoss(reduction='none')
+    T = pred_seg.shape[1]
+    t_losses = []
+    for i in range(T):
+        loss_t = criterion(pred_seg[:,i], true_seg[:,i])
+        t_losses.append(loss_t)
+    t_losses = torch.stack(t_losses)
+    return t_losses.mean()
 
 
 # ----------------------------------------------------------------------------- Laplacian Loss

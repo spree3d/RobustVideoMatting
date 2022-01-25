@@ -1,5 +1,6 @@
 from email.mime import base
 from math import ceil
+from matplotlib.pyplot import axis
 from sympy import intervals
 import torch
 import os
@@ -75,7 +76,7 @@ class Spree3DDataset(Dataset):
         return f_img
 
     def process_mask(self, mask_old):
-        return mask_old
+        return np.expand_dims(mask_old, axis=0)
         return torch.from_numpy(mask_old)
         mask = np.zeros_like(mask_old)
         mask[mask_old == 1] = 1
@@ -118,7 +119,7 @@ class Spree3DDataset(Dataset):
             masks.append(mask)
 
         frames = torch.tensor(np.array(frames, dtype=np.float32)).permute(0, 3, 1, 2)/255.0
-        masks = torch.tensor(np.array(masks, dtype=np.float32))
+        masks = torch.tensor(np.array(masks, dtype=np.uint8))
         
         return frames, masks
 
